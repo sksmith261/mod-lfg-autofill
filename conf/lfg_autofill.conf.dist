@@ -1,0 +1,56 @@
+[worldserver]
+
+###################################################################################################
+# LFG AUTOFILL
+#
+# Fills the gaps in a party with playerbots before a Dungeon Finder queue goes out.
+#
+# Players set how many bodies they want with a chat command:
+#
+#   .lfgfill 5      fill my party to 5 before queueing
+#   .lfgfill 3      fill to 3
+#   .lfgfill off    stop filling
+#   .lfgfill now    fill immediately, without queueing
+#   .lfgfill        show the current setting
+#
+# The party size arrives over a chat command rather than a control on the Dungeon Finder
+# pane because that pane is client-side FrameXML shipped in the 3.3.5a MPQ — the server
+# cannot add a widget to it. The role half needs no input at all: the pane already sends
+# the player's role checkboxes with the join packet, and the module reads them from there.
+#
+# Missing roles are worked out against the standard 5-man shape (one tank, one healer, the
+# rest damage) using the roles the party already covers. Bot roles come from playerbots'
+# own talent-spec classifier, so a protection warrior counts as a tank here exactly as it
+# does to the bot AI.
+###################################################################################################
+
+#    LfgAutofill.Enable
+#        Description: Enable the module.
+#        Default:     1  - (Enabled)
+#                     0  - (Disabled)
+
+LfgAutofill.Enable = 1
+
+#    LfgAutofill.DefaultPartySize
+#        Description: Party size used for players who have not run .lfgfill themselves.
+#                     0 leaves autofill opt-in, which is the safer default: filling a
+#                     party for someone who did not ask for it changes their run.
+#        Default:     0  - (Opt-in; players choose with .lfgfill)
+#        Values:      0, or 2-5
+
+LfgAutofill.DefaultPartySize = 0
+
+#    LfgAutofill.LevelRange
+#        Description: How far a bot's level may sit from the queueing player's before it is
+#                     considered unsuitable. Wider values fill more reliably on a quiet
+#                     server at the cost of scrappier parties.
+#        Default:     4
+
+LfgAutofill.LevelRange = 4
+
+#    LfgAutofill.Announce
+#        Description: Tell the player which bots joined and in what role.
+#        Default:     1  - (Enabled)
+#                     0  - (Disabled)
+
+LfgAutofill.Announce = 1
