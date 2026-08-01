@@ -40,13 +40,15 @@ LfgAutofill.Enable = 1
 
 LfgAutofill.DefaultPartySize = 0
 
-#    LfgAutofill.LevelRange
-#        Description: How far a bot's level may sit from the queueing player's before it is
-#                     considered unsuitable. Wider values fill more reliably on a quiet
-#                     server at the cost of scrappier parties.
-#        Default:     4
+#    LfgAutofill.LevelsAbove
+#        Description: How many levels above the queueing player a bot may be. Bots below
+#                     the player's level are never taken, so the recruited party is always
+#                     at or above whoever is filling it. 0 means exact level only, which
+#                     fills poorly on a quiet server; wider values fill more reliably at
+#                     the cost of the party outlevelling its own runs.
+#        Default:     3
 
-LfgAutofill.LevelRange = 4
+LfgAutofill.LevelsAbove = 3
 
 #    LfgAutofill.Announce
 #        Description: Tell the player which bots joined and in what role.

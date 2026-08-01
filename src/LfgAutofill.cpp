@@ -83,9 +83,12 @@ namespace
         return static_cast<uint8>(std::clamp<uint32>(v, kMinPartySize, kMaxPartySize));
     }
 
-    uint32 LevelRange()
+    // Bots are only ever taken at or above the queueing player's level. A bot below it is
+    // dead weight the player has to carry; one a few levels above pulls its own weight in
+    // a dungeon whose level range the player already qualifies for.
+    uint32 LevelsAbove()
     {
-        return sConfigMgr->GetOption<uint32>("LfgAutofill.LevelRange", 4);
+        return sConfigMgr->GetOption<uint32>("LfgAutofill.LevelsAbove", 3);
     }
 
     bool Announce()
@@ -188,7 +191,7 @@ namespace
     Player* PickBot(Player* player, FillRole need, PlayerBotMap const& bots,
                     std::unordered_set<ObjectGuid> const& taken)
     {
-        uint32 const levelRange = LevelRange();
+        uint32 const levelsAbove = LevelsAbove();
         uint8 const playerLevel = player->GetLevel();
 
         for (auto const& itr : bots)
@@ -215,7 +218,7 @@ namespace
                 if (map->IsDungeon() || map->IsRaid())
                     continue;
 
-            if (bot->GetLevel() > playerLevel + levelRange || playerLevel > bot->GetLevel() + levelRange)
+            if (bot->GetLevel() < playerLevel || bot->GetLevel() > playerLevel + levelsAbove)
                 continue;
 
             if (!GET_PLAYERBOT_AI(bot))

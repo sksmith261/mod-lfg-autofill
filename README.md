@@ -46,7 +46,9 @@ left empty: a party one short of its ideal shape beats one short of its size.
 - opposite faction
 - in combat, a battleground, or an arena
 - inside a dungeon or raid (pulling them out would strand their party)
-- outside `LfgAutofill.LevelRange` levels of the queueing player
+- below the queueing player's level, or more than `LfgAutofill.LevelsAbove` (default 3)
+  above it — the range is one-sided on purpose, so a fill never hands the player someone
+  to carry
 
 ## Implementation note
 
