@@ -247,11 +247,65 @@ namespace
         return needed;
     }
 
+    // The dungeons the player asked for, with a random pick expanded into what it can roll,
+    // which is the form LFGMgr::JoinLfg compares locks against.
+    lfg::LfgDungeonSet ExpandDungeons(lfg::LfgDungeonSet const& dungeons)
+    {
+        if (dungeons.size() == 1)
+        {
+            uint32 const id = *dungeons.begin();
+            if (sLFGMgr->GetDungeonType(id) == lfg::LFG_TYPE_RANDOM)
+                return sLFGMgr->GetDungeonsByRandom(id);
+        }
+        return dungeons;
+    }
+
+    // Which of `open` this bot would still leave open.
+    //
+    // LFGMgr::GetCompatibleDungeons drops from the group's list every dungeon locked for any
+    // one member, and a group whose list empties is refused with LFG_JOIN_PARTY_NOT_MEET_REQS
+    // — the queue simply never goes out. So a bot has to be judged on what it leaves behind,
+    // not only on its level and role.
+    //
+    // This bites hardest on Death Knights. InitializeLockedDungeons locks a DK out of every
+    // dungeon in the game until it has been rewarded quest 13188 or 13189, and random bots do
+    // not quest, so in practice every DK bot is locked out of everything. Recruiting one is
+    // enough to empty the list and kill the queue for the whole party.
+    lfg::LfgDungeonSet DungeonsLeftOpenBy(Player* bot, lfg::LfgDungeonSet const& open)
+    {
+        lfg::LfgLockMap const& locks = sLFGMgr->GetLockedDungeons(bot->GetGUID());
+        if (locks.empty())
+            return open;
+
+        lfg::LfgDungeonSet remaining;
+        for (uint32 dungeonId : open)
+        {
+            bool locked = false;
+            for (auto const& lock : locks)
+            {
+                // Lock keys carry the difficulty in their high bits; ids compare on the low 24.
+                if ((lock.first & 0x00FFFFFF) == (dungeonId & 0x00FFFFFF))
+                {
+                    locked = true;
+                    break;
+                }
+            }
+
+            if (!locked)
+                remaining.insert(dungeonId);
+        }
+
+        return remaining;
+    }
+
     // An online random bot that is free to be recruited for this player's run.
     // `bots` is passed in rather than fetched here: GetAllBots() returns the map by value,
     // and this runs once per missing role.
+    // `open` is the set of dungeons still reachable by everyone recruited so far; a bot that
+    // would empty it is skipped, and the set is narrowed to whatever the chosen bot leaves.
+    // An empty `open` means the caller is not queueing (.lfgfill now), so locks do not apply.
     Player* PickBot(Player* player, FillRole need, PlayerBotMap const& bots,
-                    std::unordered_set<ObjectGuid> const& taken)
+                    std::unordered_set<ObjectGuid> const& taken, lfg::LfgDungeonSet& open)
     {
         uint32 const levelsAbove = LevelsAbove();
         uint8 const playerLevel = player->GetLevel();
@@ -290,14 +344,24 @@ namespace
             if (BotLfgRole(bot) != need)
                 continue;
 
+            if (!open.empty())
+            {
+                lfg::LfgDungeonSet remaining = DungeonsLeftOpenBy(bot, open);
+                if (remaining.empty())
+                    continue;
+
+                open.swap(remaining);
+            }
+
             return bot;
         }
 
         return nullptr;
     }
 
-    // Returns the number of bots actually recruited.
-    uint32 FillGroup(Player* player, uint8 lfgRoles, uint8 target)
+    // Returns the number of bots actually recruited. `dungeons` is what the player is about
+    // to queue for, or empty when the fill is not headed for a queue at all.
+    uint32 FillGroup(Player* player, uint8 lfgRoles, uint8 target, lfg::LfgDungeonSet const& dungeons)
     {
         if (!target)
             return 0;
@@ -362,9 +426,13 @@ namespace
         std::unordered_set<ObjectGuid> taken;
         std::vector<std::pair<Player*, FillRole>> recruited;
 
+        // Narrowed as bots are picked, so each candidate is judged against what the ones
+        // already recruited still leave reachable.
+        lfg::LfgDungeonSet open = ExpandDungeons(dungeons);
+
         for (FillRole role : needed)
         {
-            Player* bot = fits(role) ? PickBot(player, role, bots, taken) : nullptr;
+            Player* bot = fits(role) ? PickBot(player, role, bots, taken, open) : nullptr;
             FillRole filled = role;
 
             // No bot of that role available. Rather than leave the slot empty, take a
@@ -374,7 +442,7 @@ namespace
             // contradict the moment LFG asks it, and the whole queue fails on that.
             if (!bot && role != FillRole::Damage && fits(FillRole::Damage))
             {
-                bot = PickBot(player, FillRole::Damage, bots, taken);
+                bot = PickBot(player, FillRole::Damage, bots, taken, open);
                 filled = FillRole::Damage;
             }
 
@@ -515,7 +583,7 @@ namespace
                 if (!player || !player->IsInWorld())
                     continue;
 
-                FillGroup(player, join.roles, DesiredSize(player));
+                FillGroup(player, join.roles, DesiredSize(player), join.dungeons);
 
                 s_reissuing.insert(join.playerGuid);
                 sLFGMgr->JoinLfg(player, join.roles, join.dungeons, join.comment);
@@ -579,7 +647,9 @@ namespace
                 if (!target)
                     target = kMaxPartySize;
 
-                uint32 const added = FillGroup(player, 0, target);
+                // No dungeon set: ".lfgfill now" is not headed for a queue, so a bot that
+                // would be locked out of a dungeon is still perfectly good company.
+                uint32 const added = FillGroup(player, 0, target, lfg::LfgDungeonSet{});
                 if (added)
                     handler->PSendSysMessage("LFG autofill: recruited {} bot(s).", added);
                 else

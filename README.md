@@ -58,6 +58,11 @@ went out without a tank or healer.
   `AllowTwoSide.Interaction.Group` are both on
 - in combat, a battleground, or an arena
 - inside a dungeon or raid (pulling them out would strand their party)
+- locked out of every dungeon the party is queueing for. `LFGMgr::GetCompatibleDungeons`
+  drops any dungeon locked for a single member, and a group left with none is refused with
+  `LFG_JOIN_PARTY_NOT_MEET_REQS` — the queue never goes out. In practice this excludes every
+  Death Knight bot, which are locked out of all dungeons until rewarded quest 13188 or 13189
+  and never quest. It does not apply to `.lfgfill now`, which is not headed for a queue.
 - below the queueing player's level, or more than `LfgAutofill.LevelsAbove` (default 3)
   above it — the range is one-sided on purpose, so a fill never hands the player someone
   to carry
