@@ -23,6 +23,7 @@
 #include "ObjectAccessor.h"
 #include "LFG.h"
 #include "LFGMgr.h"
+#include "World.h"
 
 #include "AiFactory.h"
 #include "PlayerbotAI.h"
@@ -96,6 +97,18 @@ namespace
         return sConfigMgr->GetOption<bool>("LfgAutofill.Announce", true);
     }
 
+    // Whether opposite-faction bots may be recruited.
+    //
+    // Gated on the core's own setting as well as ours, and deliberately so: GroupHandler
+    // only rejects cross-faction *invites*, so Group::AddMember would happily assemble a
+    // mixed party on a server that is not configured for one. Deferring to the core means
+    // this module can never produce a group state the rest of the server disagrees with.
+    bool CrossFaction()
+    {
+        return sConfigMgr->GetOption<bool>("LfgAutofill.CrossFaction", true) &&
+               sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_INTERACTION_GROUP);
+    }
+
     // The size this player wants, or 0 for "don't fill".
     uint8 DesiredSize(Player* player)
     {
@@ -115,8 +128,7 @@ namespace
         }
     }
 
-    // A bot's role comes from its talent spec, via playerbots' own classifier, so a
-    // protection warrior counts as a tank here exactly as it does to the bot AI.
+    // A player's role from their talent spec, via playerbots' own classifier.
     FillRole RoleOfPlayer(Player* player)
     {
         uint8 roles = AiFactory::GetPlayerRoles(player);
@@ -125,6 +137,56 @@ namespace
         if (roles & BOT_ROLE_HEALER)
             return FillRole::Healer;
         return FillRole::Damage;
+    }
+
+    // What a random bot will answer when LFG asks it to confirm its role.
+    //
+    // This mirrors LfgJoinAction::GetRoles in mod-playerbots rather than reusing
+    // AiFactory::GetPlayerRoles above, because the two disagree and it is this one that
+    // decides whether the group passes LFGMgr::CheckGroupRoles. GetPlayerRoles has no
+    // Death Knight case at all, so a blood DK reads as damage here while answering tank
+    // there; and it calls every feral druid a tank, while the bot answers damage without
+    // Thick Hide. Recruiting against the wrong classifier assembles a party that looks
+    // correct, then fails the role check, and the queue dies with nothing shown to the
+    // player. If that function changes upstream, this has to follow it.
+    FillRole BotLfgRole(Player* bot)
+    {
+        uint8 const spec = AiFactory::GetPlayerSpecTab(bot);
+
+        switch (bot->getClass())
+        {
+            case CLASS_DRUID:
+                if (spec == 2)
+                    return FillRole::Healer;
+                if (spec == 1 && bot->HasAura(16931)) // thick hide
+                    return FillRole::Tank;
+                return FillRole::Damage;
+            case CLASS_PALADIN:
+                if (spec == 1)
+                    return FillRole::Tank;
+                if (spec == 0)
+                    return FillRole::Healer;
+                return FillRole::Damage;
+            case CLASS_PRIEST:
+                return spec != 2 ? FillRole::Healer : FillRole::Damage;
+            case CLASS_SHAMAN:
+                return spec == 2 ? FillRole::Healer : FillRole::Damage;
+            case CLASS_WARRIOR:
+                return spec == 2 ? FillRole::Tank : FillRole::Damage;
+            case CLASS_DEATH_KNIGHT:
+                return spec == 0 ? FillRole::Tank : FillRole::Damage;
+            default:
+                return FillRole::Damage;
+        }
+    }
+
+    // Random bots answer the role check themselves and must be read the way they will
+    // answer it; humans tick their own boxes, so their spec is the best guess available.
+    FillRole RoleOfMember(Player* member)
+    {
+        if (GET_PLAYERBOT_AI(member) && sRandomPlayerbotMgr.IsRandomBot(member))
+            return BotLfgRole(member);
+        return RoleOfPlayer(member);
     }
 
     // The queueing player's own role comes from the pane's checkboxes when they ticked
@@ -193,6 +255,7 @@ namespace
     {
         uint32 const levelsAbove = LevelsAbove();
         uint8 const playerLevel = player->GetLevel();
+        bool const crossFaction = CrossFaction();
 
         for (auto const& itr : bots)
         {
@@ -207,7 +270,7 @@ namespace
             if (bot->GetGroup())
                 continue;
 
-            if (bot->GetTeamId() != player->GetTeamId())
+            if (!crossFaction && bot->GetTeamId() != player->GetTeamId())
                 continue;
 
             if (bot->IsInCombat() || bot->InBattleground() || bot->InArena())
@@ -224,7 +287,7 @@ namespace
             if (!GET_PLAYERBOT_AI(bot))
                 continue;
 
-            if (RoleOfPlayer(bot) != need)
+            if (BotLfgRole(bot) != need)
                 continue;
 
             return bot;
@@ -249,15 +312,33 @@ namespace
         if (current >= target)
             return 0;
 
-        bool haveTank = false;
-        bool haveHealer = false;
+        // Running tally of what the party covers, counted the way LFGMgr will count it.
+        uint8 tanks = 0;
+        uint8 healers = 0;
+        uint8 damage = 0;
 
         auto note = [&](FillRole role)
         {
-            if (role == FillRole::Tank)
-                haveTank = true;
-            else if (role == FillRole::Healer)
-                haveHealer = true;
+            switch (role)
+            {
+                case FillRole::Tank:   ++tanks;   break;
+                case FillRole::Healer: ++healers; break;
+                default:               ++damage;  break;
+            }
+        };
+
+        // LFGMgr::CheckGroupRoles rejects a group the moment any of these is exceeded, and
+        // a rejected role check kills the queue without telling the player why. So a bot
+        // that would push the party past one of them is worse than an empty slot: a valid
+        // four-man queues, an invalid five-man does not.
+        auto fits = [&](FillRole role)
+        {
+            switch (role)
+            {
+                case FillRole::Tank:   return tanks < lfg::LFG_TANKS_NEEDED;
+                case FillRole::Healer: return healers < lfg::LFG_HEALERS_NEEDED;
+                default:               return damage < lfg::LFG_DPS_NEEDED;
+            }
         };
 
         note(RoleFromLfgMask(player, lfgRoles));
@@ -269,11 +350,11 @@ namespace
                 Player* member = ref->GetSource();
                 if (!member || member == player)
                     continue;
-                note(RoleOfPlayer(member));
+                note(RoleOfMember(member));
             }
         }
 
-        std::vector<FillRole> needed = MissingRoles(haveTank, haveHealer, current, target);
+        std::vector<FillRole> needed = MissingRoles(tanks > 0, healers > 0, current, target);
         if (needed.empty())
             return 0;
 
@@ -283,19 +364,26 @@ namespace
 
         for (FillRole role : needed)
         {
-            Player* bot = PickBot(player, role, bots, taken);
+            Player* bot = fits(role) ? PickBot(player, role, bots, taken) : nullptr;
+            FillRole filled = role;
 
-            // No bot of that role in range. Rather than leave the slot empty, take any
-            // damage bot — a party that is one short of its ideal shape still beats a
-            // party that is one short of its size.
-            if (!bot && role != FillRole::Damage)
+            // No bot of that role available. Rather than leave the slot empty, take a
+            // damage bot — a party one short of its ideal shape still beats one short of
+            // its size. It is recorded as damage, which is what it is: labelling it with
+            // the role we wanted puts a claim on the group that the bot itself will
+            // contradict the moment LFG asks it, and the whole queue fails on that.
+            if (!bot && role != FillRole::Damage && fits(FillRole::Damage))
+            {
                 bot = PickBot(player, FillRole::Damage, bots, taken);
+                filled = FillRole::Damage;
+            }
 
             if (!bot)
                 continue;
 
             taken.insert(bot->GetGUID());
-            recruited.emplace_back(bot, role);
+            note(filled);
+            recruited.emplace_back(bot, filled);
         }
 
         if (recruited.empty())
@@ -338,6 +426,25 @@ namespace
             if (Announce())
                 ChatHandler(player->GetSession()).PSendSysMessage(
                     "|cff4CFF00[LFG Autofill]|r {} joined as {}.", bot->GetName(), RoleName(role));
+        }
+
+        // Say so when the party came up short. The queue still goes out and is still
+        // valid — the shape is just thinner than asked for, and a player who is told that
+        // can decide to wait for a better fill instead of wondering mid-dungeon.
+        if (Announce() && recruited.size() < needed.size())
+        {
+            if (!tanks && !healers)
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff4CFF00[LFG Autofill]|r No tank or healer was available; queueing without one.");
+            else if (!tanks)
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff4CFF00[LFG Autofill]|r No tank was available; queueing without one.");
+            else if (!healers)
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff4CFF00[LFG Autofill]|r No healer was available; queueing without one.");
+            else
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff4CFF00[LFG Autofill]|r Only filled to {}.", current + added);
         }
 
         return added;

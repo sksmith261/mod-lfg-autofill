@@ -50,6 +50,19 @@ LfgAutofill.DefaultPartySize = 0
 
 LfgAutofill.LevelsAbove = 3
 
+#    LfgAutofill.CrossFaction
+#        Description: Allow opposite-faction bots to be recruited. This roughly doubles the
+#                     pool, which matters most in level bands where one faction has no
+#                     healer-capable classes online at all.
+#                     Has no effect unless the core's AllowTwoSide.Interaction.Group is
+#                     also enabled: that setting is what makes a mixed party work at all,
+#                     so the module defers to it rather than building a group the rest of
+#                     the server does not expect.
+#        Default:     1  - (Enabled where the core allows it)
+#                     0  - (Same faction only)
+
+LfgAutofill.CrossFaction = 1
+
 #    LfgAutofill.Announce
 #        Description: Tell the player which bots joined and in what role.
 #        Default:     1  - (Enabled)

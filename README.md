@@ -34,16 +34,28 @@ statement of intent.
 ## How it decides what is missing
 
 Against the standard 5-man shape — one tank, one healer, the rest damage — counting what
-the party already covers. Bot roles come from playerbots' own classifier
-(`AiFactory::GetPlayerRoles`), so specs are read the same way the bot AI reads them.
+the party already covers.
+
+Bot roles are read with the *same* logic the bot itself will use when LFG asks it to
+confirm a role (`LfgJoinAction::GetRoles` in mod-playerbots), not with the more obvious
+`AiFactory::GetPlayerRoles`. The two disagree: the latter has no Death Knight case, so a
+blood DK reads as damage but answers tank, and it calls every feral druid a tank while the
+bot answers damage without Thick Hide. Recruiting against the wrong one assembles a party
+that looks right, then fails `LFGMgr::CheckGroupRoles`, and the queue dies silently.
+
+No bot is recruited if it would push the party past 1 tank, 1 healer or 3 damage, for the
+same reason — a valid four-man queues, an invalid five-man does not.
 
 If no bot of a needed role is available, the slot is filled with a damage bot rather than
-left empty: a party one short of its ideal shape beats one short of its size.
+left empty: a party one short of its ideal shape beats one short of its size. The
+substitute is recorded as damage, which is what it is, and the player is told the party
+went out without a tank or healer.
 
 ## Bots it will not take
 
 - already in someone's group
-- opposite faction
+- opposite faction, unless `LfgAutofill.CrossFaction` *and* the core's
+  `AllowTwoSide.Interaction.Group` are both on
 - in combat, a battleground, or an arena
 - inside a dungeon or raid (pulling them out would strand their party)
 - below the queueing player's level, or more than `LfgAutofill.LevelsAbove` (default 3)
