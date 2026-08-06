@@ -69,3 +69,61 @@ LfgAutofill.CrossFaction = 1
 #                     0  - (Disabled)
 
 LfgAutofill.Announce = 1
+
+#    LfgAutofill.BorrowFromSurplus
+#        Description: When there are not enough bots in the recruitable band (the queueing
+#                     player's level up to LevelsAbove over it), borrow bots from another
+#                     level, re-level them to the player's level, and put them back on the
+#                     level they came from when they leave the party.
+#
+#                     This is a fallback, never a first choice: it only runs for slots that
+#                     could not be filled from bots already in the band, so on a server with
+#                     a healthy pool at the player's level it never fires. That is what makes
+#                     it safe to leave on.
+#
+#                     Donors are taken from the bracket that CONTAINS the player's level
+#                     first, which is census-neutral: taking a level 67 bot down to a level
+#                     60 player leaves it inside 60-69, so mod-player-bot-level-brackets has
+#                     nothing to correct afterwards. Only once that bracket is exhausted does
+#                     anything move between brackets, and then donors are taken in order of
+#                     surplus against that module's configured targets. Bracket definitions
+#                     are read from its configuration, so the two cannot drift apart.
+#
+#                     Because a re-level is spread over several world ticks, a queue press
+#                     that borrows waits for the bots to land before the join goes out — the
+#                     player sees "re-levelling N bot(s); queueing when they arrive", then
+#                     the usual queue pop. See BorrowTimeoutMs for the give-up point.
+#
+#                     Note this is a re-roll, not a loan of a specific character build:
+#                     PlayerbotFactory rebuilds skills, spells, talents and gear from scratch
+#                     in both directions, and a bot borrowed as a healer can land as damage.
+#                     A landed bot that would break the LFG role check is released rather
+#                     than added, because an invalid party kills the whole queue silently.
+#        Default:     1  - (Enabled)
+#                     0  - (Disabled; short fills stay short)
+
+LfgAutofill.BorrowFromSurplus = 1
+
+#    LfgAutofill.MaxBorrowPerFill
+#        Description: Ceiling on how many bots a single fill may borrow. A party is five, so
+#                     four covers the worst case; the setting exists so no single fill can
+#                     ever re-roll more than a party's worth of the bot population.
+#        Default:     4
+
+LfgAutofill.MaxBorrowPerFill = 4
+
+#    LfgAutofill.BorrowIntervalMs
+#        Description: Milliseconds between queued re-levels. PlayerbotFactory::Randomize
+#                     tears down and rebuilds a character across roughly eighteen phases;
+#                     doing several inline would hitch the world thread, so they are spread
+#                     one per interval. Lower fills faster at the cost of a heavier tick.
+#        Default:     250
+
+LfgAutofill.BorrowIntervalMs = 250
+
+#    LfgAutofill.BorrowTimeoutMs
+#        Description: How long a queue press waits for its borrowed bots before going out
+#                     with whoever has landed. Stragglers (usually a donor that logged out
+#                     or is stuck in combat) are cancelled and sent home, and the queue is
+#                     issued with the party as it stands.
+#        Default:     10000

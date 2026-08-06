@@ -77,6 +77,32 @@ actually sitting in a party of five.
 Instead the hook cancels the join, the party is filled on the next world tick, and the join
 is re-issued against the now-real group. To the player it looks like one queue press.
 
+## Borrowing from other level brackets
+
+When the recruitable band (the player's level up to `LevelsAbove` over it) cannot cover
+every slot, the module borrows bots from other levels: the donor is re-levelled to the
+player's level with `PlayerbotFactory`, serves in the party, and is put back on the level
+it came from when it leaves. This mirrors mod-lfr-autofill's borrowing — donors come from
+the bracket that *contains* the player's level first (census-neutral: a 67 taken to a
+level-60 player stays inside 60-69), then in order of surplus against
+mod-player-bot-level-brackets' configured targets, whose definitions are read from that
+module's own configuration so the two cannot drift apart.
+
+Loans are persisted to `lfg_autofill_borrowed` in the characters DB. The record outlives
+the return *queue* and is closed only when the return re-level actually lands, so a
+restart mid-run cannot strand a bot at the wrong level; a startup sweep queues every
+leftover row for return.
+
+Two things are specific to the LFG shape of the problem:
+
+- A re-level is spread over several world ticks (`BorrowIntervalMs`), but a queue press is
+  a moment. So a join that borrows is parked and re-issued automatically once the last
+  borrowed bot lands — or after `BorrowTimeoutMs`, when stragglers are cancelled and sent
+  home and the queue goes out with the party as it stands.
+- A re-roll re-picks talents, so a bot borrowed as a healer can land as damage. Each
+  landed bot is judged against its post-re-level dungeon locks and the LFG role caps, and
+  released rather than added if it would kill the queue.
+
 ## Interaction with mod-playerbots
 
 `AiPlayerbot.RandomBotJoinLfg` already puts random bots into the LFG queue, so solo players
